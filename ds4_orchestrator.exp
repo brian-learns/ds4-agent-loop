@@ -1,0 +1,79 @@
+#!/usr/bin/expect -f
+
+# Configuration
+set timeout -1
+set MAX_STEPS 3
+set current_step 1
+
+# Define your main prompt payload and the heartbeat progression command
+set local_cwd [pwd]
+set initial_payload "Draft a short science fiction story about a topical event.  Create files in '$local_cwd'."
+set step_command "write the next chapter" ;# Change to "" or your preferred step trigger if needed
+
+# 1. Initialize Logging
+# This creates a file like 'ds4_session_2026_06_15.log' in your current directory
+set timestamp [clock format [clock seconds] -format {%Y_%m_%d_%H%M%S}]
+set log_filename "ds4_session_$timestamp.log"
+
+log_file -a $log_filename
+puts "========================================================================="
+puts "Logging entire session (prompts, thoughts, tool outputs) to: $log_filename"
+puts "========================================================================="
+
+# Expand the internal match buffer to prevent high-volume tool output from clipping
+match_max 100000
+
+# Spawn the agent without -p to drop straight into raw stdin mode
+spawn /home/opencode-role/src/ds4/start-xvfb-agent --non-interactive
+
+# 2. First Boot Synchronization
+expect {
+    "\r\n\r\n+DWARFSTAR_WAITING\r\n" {
+        send -- "$initial_payload\r"
+    }
+    timeout {
+        puts "Error: Agent failed to initialize and emit waiting token."
+        exit 1
+    }
+}
+
+# 3. Finite Step Execution Loop
+while { $current_step <= $MAX_STEPS } {
+    expect {
+        "\r\n\r\n+DWARFSTAR_WAITING\r\n" {
+            # This status message will also be captured in your log file for easy scanning
+            puts "\n\n>>> -- ORCHESTRATOR: Step $current_step of $MAX_STEPS. Advancing engine... <<<\n\n"
+
+            send -- "$step_command\r"
+            incr current_step
+        }
+        eof {
+            puts "\n>>> -- ORCHESTRATOR: Process exited early (EOF)] <<<\n"
+            break
+        }
+        timeout {
+            puts "\n>>> -- ORCHESTRATOR: Error - Step $current_step timed out waiting for token <<<\n"
+            exit 2
+        }
+    }
+}
+
+# 4. Clean Shutdown
+if { $current_step > $MAX_STEPS } {
+    puts "\n>>> -- ORCHESTRATOR: Target steps reached ($MAX_STEPS). Terminating safely. <<<\n"
+    send -- "\x03" # raw Control-C byte
+    # Wait for the system to register EOF (process death)
+    expect {
+        eof {
+            puts "\n>>> \[ORCHESTRATOR: ds4-agent process closed cleanly via Interrupt.\] <<<\n"
+        }
+        timeout {
+            # Fallback: forcefully close the spawn container if it hangs
+            puts "\n>>> \[ORCHESTRATOR: Agent hung on SIGINT. Forcing close.\] <<<\n"
+            close
+        }
+    }
+}
+
+# Close the log file stream cleanly
+log_file
