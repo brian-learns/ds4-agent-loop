@@ -1,0 +1,20 @@
+#!/bin/bash
+# start-xvfb-agent -- launch ds4-agent with a virtual framebuffer for Chrome
+
+XVFB_PID=""
+if [ -z "$DISPLAY" ]; then
+    export DISPLAY=:99
+    Xvfb :99 -screen 0 1280x720x24 2>/dev/null &
+    XVFB_PID=$!
+fi
+
+DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd ) # https://stackoverflow.com/a/246128
+
+SYSTEM_PROMPT="You are a helpful coding assistant running inside ds4-agent."
+
+echo $SYSTEM_PROMPT
+"$DIR"/ds4-agent -m "$DIR"/ds4flash.gguf --system "$SYSTEM_PROMPT" "$@"
+rc=$?
+
+[ -n "$XVFB_PID" ] && kill "$XVFB_PID" 2>/dev/null
+exit $rc
